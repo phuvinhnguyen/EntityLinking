@@ -26,7 +26,13 @@ def llm_call(messages, max_new_tokens=1024, **config):
     else:
         if isinstance(messages, str): messages = [{"role": "user", "content": messages}]
         error = ''
-        api_keys = os.getenv('LLM_API_TOKEN').split(',')
+        
+        # Check if API token is available
+        api_token = os.getenv('LLM_API_TOKEN')
+        if not api_token:
+            return "No API token available. Please set LLM_API_TOKEN environment variable."
+        
+        api_keys = api_token.split(',')
         for _ in range(7):
             try:
                 response = completion(model=config['model_name'], messages=messages, max_tokens=max_new_tokens, api_key=random.choice(api_keys))
