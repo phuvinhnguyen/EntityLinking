@@ -1,0 +1,12 @@
+python Sparkle/linking.py \
+  --documents_dir /home/kat/Desktop/UppsalaUniversity/Project/EntityLinking/zeshel/documents \
+  --mentions_file /home/kat/Desktop/UppsalaUniversity/Project/EntityLinking/zeshel/mentions/tmp.json \
+  --output_file /home/kat/Desktop/UppsalaUniversity/Project/EntityLinking/out/zeshel_linking_test.jsonl \
+  --max_documents 10 \
+  --ranking_algorithm bradley_terry \
+  --n_queries 1 \
+  --top_k_search 1 \
+  --n_experiments 2 \
+  --experiment_winners 3 \
+  --experiment_subset_size 8 \
+  --model_name gemini/gemma-3-4b-it

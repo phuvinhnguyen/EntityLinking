@@ -1,5 +1,5 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer
-import os, random
+import os, random, time
 from typing import List
 from litellm import completion
 
@@ -35,6 +35,7 @@ def llm_call(messages, max_new_tokens=1024, **config):
         api_keys = api_token.split(',')
         for _ in range(7):
             try:
+                time.sleep(7)
                 response = completion(model=config['model_name'], messages=messages, max_tokens=max_new_tokens, api_key=random.choice(api_keys))
                 return response.choices[0].message.content
             except Exception as e:
