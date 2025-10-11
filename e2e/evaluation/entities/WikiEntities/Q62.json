@@ -1,0 +1,17 @@
+{
+  "type": "item",
+  "labels": {
+    "en": {"language": "en", "value": "San Francisco"}
+  },
+  "descriptions": {
+    "en": {"language": "en", "value": "cultural, commercial, and financial center in Northern California, part of the San Francisco Bay Area"}
+  },
+  "aliases": {
+    "en": [
+      {"language": "en", "value": "SF"},
+      {"language": "en", "value": "San Francisco, CA"},
+      {"language": "en", "value": "City by the Bay"},
+      {"language": "en", "value": "Fog City"}
+    ]
+  }
+}

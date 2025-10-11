@@ -1,0 +1,16 @@
+{
+  "type": "item",
+  "labels": {
+    "en": {"language": "en", "value": "Chicago"}
+  },
+  "descriptions": {
+    "en": {"language": "en", "value": "most populous city in the U.S. state of Illinois and the third most populous city in the United States"}
+  },
+  "aliases": {
+    "en": [
+      {"language": "en", "value": "Chicago, IL"},
+      {"language": "en", "value": "Windy City"},
+      {"language": "en", "value": "Chi-Town"}
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "type": "item",
+  "labels": {
+    "en": {"language": "en", "value": "Houston"}
+  },
+  "descriptions": {
+    "en": {"language": "en", "value": "most populous city in Texas and the fourth most populous city in the United States"}
+  },
+  "aliases": {
+    "en": [
+      {"language": "en", "value": "Houston, TX"},
+      {"language": "en", "value": "Houston, Texas"},
+      {"language": "en", "value": "Space City"}
+    ]
+  }
+}

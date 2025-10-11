@@ -1,0 +1,15 @@
+{
+  "type": "item",
+  "labels": {
+    "en": {"language": "en", "value": "Gainesville"}
+  },
+  "descriptions": {
+    "en": {"language": "en", "value": "city in and the county seat of Alachua County, Florida, United States"}
+  },
+  "aliases": {
+    "en": [
+      {"language": "en", "value": "Gainesville, FL"},
+      {"language": "en", "value": "Gainesville, Florida"}
+    ]
+  }
+}

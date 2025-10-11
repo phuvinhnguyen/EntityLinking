@@ -1,0 +1,15 @@
+{
+  "type": "item",
+  "labels": {
+    "en": {"language": "en", "value": "Steve Jobs"}
+  },
+  "descriptions": {
+    "en": {"language": "en", "value": "American business magnate, industrial designer, investor, and media proprietor, co-founder of Apple Inc."}
+  },
+  "aliases": {
+    "en": [
+      {"language": "en", "value": "Steven Paul Jobs"},
+      {"language": "en", "value": "Steven Jobs"}
+    ]
+  }
+}

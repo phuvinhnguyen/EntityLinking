@@ -1,0 +1,16 @@
+{
+  "type": "item",
+  "labels": {
+    "en": {"language": "en", "value": "Washington"}
+  },
+  "descriptions": {
+    "en": {"language": "en", "value": "state in the Pacific Northwest region of the United States"}
+  },
+  "aliases": {
+    "en": [
+      {"language": "en", "value": "WA"},
+      {"language": "en", "value": "Washington State"},
+      {"language": "en", "value": "State of Washington"}
+    ]
+  }
+}

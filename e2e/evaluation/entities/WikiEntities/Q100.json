@@ -1,0 +1,17 @@
+{
+  "type": "item",
+  "labels": {
+    "en": {"language": "en", "value": "Boston"}
+  },
+  "descriptions": {
+    "en": {"language": "en", "value": "capital and most populous city of the Commonwealth of Massachusetts in the United States"}
+  },
+  "aliases": {
+    "en": [
+      {"language": "en", "value": "Boston, MA"},
+      {"language": "en", "value": "Boston, Massachusetts"},
+      {"language": "en", "value": "Beantown"},
+      {"language": "en", "value": "The Hub"}
+    ]
+  }
+}

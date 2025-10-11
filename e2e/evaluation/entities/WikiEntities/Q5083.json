@@ -1,0 +1,15 @@
+{
+  "type": "item",
+  "labels": {
+    "en": {"language": "en", "value": "Redmond"}
+  },
+  "descriptions": {
+    "en": {"language": "en", "value": "city in King County, Washington, United States, located 15 miles east of Seattle"}
+  },
+  "aliases": {
+    "en": [
+      {"language": "en", "value": "Redmond, WA"},
+      {"language": "en", "value": "Redmond, Washington"}
+    ]
+  }
+}
