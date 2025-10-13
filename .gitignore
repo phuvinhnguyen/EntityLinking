@@ -1,3 +1,6 @@
 **/__pycache__/
 **/zeshel/
 **/venv/
+**/entities/
+**/test_data/
+results.json
