@@ -4,6 +4,7 @@ Configuration settings for the Entity Linking system
 import os
 import subprocess
 from typing import Dict, Any
+import yaml
 
 
 class Config:
@@ -94,3 +95,28 @@ class Config:
             cls.SEARCH_METHOD = os.getenv("SEARCH_METHOD")
         if os.getenv("RANKING_ALGORITHM"):
             cls.RANKING_ALGORITHM = os.getenv("RANKING_ALGORITHM")
+
+    @classmethod
+    def load_from_yaml(cls, yaml_path: str) -> "Config":
+        """Load configuration values from a YAML file (layered over defaults and env) into an instance.
+        Does not mutate class-level defaults.
+        """
+        instance = cls()
+        # 1) Overlay YAML on top of instance defaults
+        if yaml_path and os.path.exists(yaml_path):
+            with open(yaml_path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            for key, value in data.items():
+                if hasattr(instance, key):
+                    setattr(instance, key, value)
+        # 2) Overlay environment variables without mutating class attributes
+        if os.getenv("LLM_MODEL"):
+            instance.LLM_MODEL = os.getenv("LLM_MODEL")
+        if os.getenv("SEARCH_METHOD"):
+            instance.SEARCH_METHOD = os.getenv("SEARCH_METHOD")
+        if os.getenv("RANKING_ALGORITHM"):
+            instance.RANKING_ALGORITHM = os.getenv("RANKING_ALGORITHM")
+        return instance
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {k: getattr(self, k) for k in vars(self.__class__) if k.isupper()}

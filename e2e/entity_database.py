@@ -75,11 +75,6 @@ class EntityDatabase:
         """Load entities from sample.jsonl file"""
         print(f"Loading entities from {sample_file}...")
         
-        if not os.path.exists(sample_file):
-            print(f"Sample file {sample_file} not found. Creating sample entities.")
-            self._create_sample_entities()
-            return
-        
         entity_count = 0
         with open(sample_file, 'r', encoding='utf-8') as f:
             for line in f:
@@ -122,11 +117,6 @@ class EntityDatabase:
                     continue
         
         print(f"Loaded {entity_count} entities from sample data")
-        
-        # If no entities loaded, create sample ones
-        if entity_count == 0:
-            print("No entities loaded. Creating sample entities.")
-            self._create_sample_entities()
     
     def load_from_evaluation_setup(self, entities_file: str):
         """Load entities from evaluation setup"""
@@ -220,52 +210,7 @@ class EntityDatabase:
         except Exception as e:
             print(f"Error loading entities from Wikidata format: {e}")
             return False
-    
-    def _create_sample_entities(self):
-        """Create sample entities for testing"""
-        sample_entities = [
-            {
-                "id": "Q848117",
-                "title": "Houston Astros",
-                "description": "The Houston Astros are an American professional baseball team based in Houston, Texas.",
-                "metadata": {"type": "sports_team", "sport": "baseball"}
-            },
-            {
-                "id": "Q3176522", 
-                "title": "Jeff Keppinger",
-                "description": "Jeff Keppinger is a former American professional baseball infielder.",
-                "metadata": {"type": "person", "profession": "baseball_player"}
-            },
-            {
-                "id": "Q487999",
-                "title": "Gainesville",
-                "description": "Gainesville is a city in and the county seat of Alachua County, Florida.",
-                "metadata": {"type": "location", "state": "Florida"}
-            },
-            {
-                "id": "Q1853998",
-                "title": "Robin Hood's Bay",
-                "description": "Robin Hood's Bay is a small fishing village and a bay located in the North York Moors National Park.",
-                "metadata": {"type": "location", "country": "England"}
-            },
-            {
-                "id": "Q2201",
-                "title": "Kick-Ass",
-                "description": "Kick-Ass is a 2010 superhero film based on the comic book of the same name.",
-                "metadata": {"type": "film", "year": 2010}
-            }
-        ]
-        
-        for entity in sample_entities:
-            self.add_entity(
-                entity_id=entity["id"],
-                title=entity["title"],
-                description=entity["description"],
-                metadata=entity["metadata"]
-            )
-        
-        print(f"Created {len(sample_entities)} sample entities")
-    
+
     def build_index(self):
         """Build search index"""
         if not self.entities:

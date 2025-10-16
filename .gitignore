@@ -1,6 +1,5 @@
 **/__pycache__/
 **/zeshel/
 **/venv/
-**/entities/
-**/test_data/
-results.json
+**/entities/WikiEntities/
+**/test_data/*.jsonl

@@ -17,6 +17,7 @@ rank-bm25>=0.2.2
 # Utilities
 tqdm>=4.64.0
 dataclasses-json>=0.5.0
+PyYAML>=6.0
 
 # Optional: for better performance
 faiss-cpu>=1.7.0

@@ -5,6 +5,7 @@ Evaluation script for Entity Linking system using proper evaluation setup
 import os
 import sys
 import json
+import datetime
 import time
 import argparse
 from typing import List, Dict, Any, Tuple, Set
@@ -580,12 +581,14 @@ def main():
                        default='evaluation/test_data/test_cases.jsonl',
                        help='Path to test file')
     parser.add_argument('--output_file', '-o', type=str,
-                       default='evaluation/results.json',
+                       default=None, # if not provided, will be saved to evaluation/results.json
                        help='Path to output file')
     parser.add_argument('--comprehensive', '-c', action='store_true',
                        help='Run comprehensive evaluation with NER and linking metrics')
-    parser.add_argument('--system', '-s', type=str, default='simple',
-                       help='System to evaluate (simple, ranking)')
+    parser.add_argument('--system', '-s', type=str, default='ranking',
+                       help='System to evaluate (ranking, graph, onenet)')
+    parser.add_argument('--config', '-cfg', type=str, default=None,
+                       help='Path to YAML config file or directory (auto-picks {system}.yaml)')
     parser.add_argument('--verbose', '-v', action='store_true',
                        help='Verbose output')
     
@@ -606,19 +609,31 @@ def main():
             return
     
     test_file = args.test_file
-    output_file = args.output_file
+    if args.output_file is None:
+        output_file = f"evaluation/results_{args.system}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    else:
+        output_file = args.output_file
     
     # Check if files exist
     if not os.path.exists(test_file):
         print(f"Test file not found: {test_file}")
         return
     
-    # Create evaluator
-    config = Config()
-    config.TOP_K_SEARCH = 10
-    config.N_EXPERIMENTS = 2
-    config.EXPERIMENT_WINNERS = 2
-    config.EXPERIMENT_SUBSET_SIZE = 4
+    # Resolve config from YAML if provided
+    yaml_path = None
+    if args.config:
+        if os.path.isdir(args.config):
+            # auto-pick {system}.yaml within directory
+            candidate = os.path.join(args.config, f"{args.system}.yaml")
+            yaml_path = candidate if os.path.exists(candidate) else None
+        elif os.path.isfile(args.config):
+            yaml_path = args.config
+
+    if yaml_path:
+        print(f"Loading config from: {yaml_path}")
+        config = Config.load_from_yaml(yaml_path)
+    else:
+        config = Config()
     
     evaluator = EntityLinkingEvaluator(config)
     
