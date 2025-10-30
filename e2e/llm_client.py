@@ -34,31 +34,60 @@ class LLMClient:
     def _load_model(self):
         """Load the LLM model"""
         if self.model_path and TRANSFORMERS_AVAILABLE:
-            try:
-                print(f"Loading HuggingFace model from {self.model_path}")
-                
+            def try_load(trust_remote_code: bool, use_fast: bool) -> bool:
                 # Get HuggingFace token for gated models
                 hf_token = os.getenv('HUGGINGFACE_TOKEN')
                 if not hf_token:
                     print("Warning: No HUGGINGFACE_TOKEN found. Model may not load if gated.")
-                
-                # Load model with token
+                print(
+                    f"Loading HuggingFace model from {self.model_path} (trust_remote_code={trust_remote_code}, use_fast={use_fast})"
+                )
                 self.model = AutoModelForCausalLM.from_pretrained(
-                    self.model_path, 
+                    self.model_path,
                     device_map='auto',
                     dtype='auto',
-                    token=hf_token
+                    token=hf_token,
+                    trust_remote_code=trust_remote_code,
                 )
                 self.tokenizer = AutoTokenizer.from_pretrained(
                     self.model_path,
-                    token=hf_token
+                    token=hf_token,
+                    trust_remote_code=trust_remote_code,
+                    use_fast=use_fast,
                 )
                 if self.tokenizer.pad_token is None:
                     self.tokenizer.pad_token = self.tokenizer.eos_token
-                self.type = 'hf'
-                print("HuggingFace model loaded successfully")
+                return True
+
+            try:
+                loaded = False
+                # Attempt 1: default settings
+                try:
+                    loaded = try_load(trust_remote_code=False, use_fast=True)
+                except Exception as e1:
+                    print(f"Load attempt 1 failed: {type(e1).__name__}: {e1}")
+                # Attempt 2: trust_remote_code=True
+                if not loaded:
+                    try:
+                        loaded = try_load(trust_remote_code=True, use_fast=True)
+                    except Exception as e2:
+                        print(f"Load attempt 2 failed: {type(e2).__name__}: {e2}")
+                # Attempt 3: slow tokenizer
+                if not loaded:
+                    try:
+                        loaded = try_load(trust_remote_code=True, use_fast=False)
+                    except Exception as e3:
+                        print(f"Load attempt 3 failed: {type(e3).__name__}: {e3}")
+
+                if loaded:
+                    self.type = 'hf'
+                    print("HuggingFace model loaded successfully")
+                else:
+                    print("Error loading HuggingFace model after multiple attempts.")
+                    print("Falling back to API mode")
+                    self.type = 'api'
             except Exception as e:
-                print(f"Error loading HuggingFace model: {e}")
+                print(f"Unexpected error loading HuggingFace model: {type(e).__name__}: {e}")
                 print("Falling back to API mode")
                 self.type = 'api'
         else:
