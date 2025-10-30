@@ -46,7 +46,6 @@ class LLMClient:
                     self.model = AutoModelForCausalLM.from_pretrained(
                         self.model_path,
                         device_map='auto',
-                        dtype='auto',
                         token=hf_token,
                         trust_remote_code=trust_remote_code,
                     )
