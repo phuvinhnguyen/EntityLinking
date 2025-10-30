@@ -3,3 +3,4 @@
 **/venv/
 **/entities/WikiEntities/
 **/test_data/*.jsonl
+**/e2e/configs/*.yaml

@@ -11,10 +11,10 @@ class Config:
     """Configuration class for entity linking system"""
     
     # LLM Configuration
-    LLM_MODEL = "google/gemma-3-270m"  # Using HuggingFace model to avoid API quota
-    LLM_MODEL_PATH = "google/gemma-3-270m"  # Path for HuggingFace model
+    LLM_MODEL = "gemini/gemma-3-4b-it"  # Using HuggingFace model to avoid API quota
+    LLM_MODEL_PATH = None # Path for HuggingFace model
     LLM_MAX_TOKENS = 512  # Reduced for smaller model
-    LLM_API_DELAY = 0.1  # Minimal delay for local model
+    LLM_API_DELAY = 5  # Minimal delay for local model
     
     # Text Processing
     CHUNK_SIZE = 1000  # Characters per chunk

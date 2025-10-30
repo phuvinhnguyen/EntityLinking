@@ -92,7 +92,7 @@ class GraphSystem(BaseSystem):
         self.M_DESCRIPTIONS = 3  # Number of descriptions per entity
         self.N_DESCRIPTIONS = 3  # Number of descriptions per detected entity
         self.K_SEARCH = 5  # Number of relevant entities to search
-        self.T_MAX = 6  # Maximum entities per LLM selection
+        self.T_MAX = 5  # Maximum entities per LLM selection
         self.HIGH_CONFIDENCE_THRESHOLD = 0.9
         self.LOW_CONFIDENCE_THRESHOLD = 0.5
     
@@ -160,8 +160,13 @@ class GraphSystem(BaseSystem):
         print(f"[{self.system_name}] Step 1: Building entity graph from text...")
         self._build_entity_graph(text, timeout)
         
+        # If no entities detected, use fallback
+        if not self.graph.nodes:
+            print(f"[{self.system_name}] No entities detected, using fallback detection...")
+            self._fallback_entity_detection_full(text)
+        
         # Step 2: Generate descriptions for detected entities
-        print(f"[{self.system_name}] Step 2: Generating descriptions for entities...")
+        print(f"[{self.system_name}] Step 2: Generating descriptions for {len(self.graph.nodes)} entities...")
         self._generate_entity_descriptions(timeout)
         
         # Step 3: Search and match entities
@@ -200,122 +205,270 @@ class GraphSystem(BaseSystem):
         )
     
     def _build_entity_graph(self, text: str, timeout: int):
-        """Build entity graph from text using LLM"""
+        """Build entity graph from text using LLM with context-based detection"""
         try:
-            # Use LLM to detect entities and relations
+            # Use LLM to detect entities and relations without requiring positions
             prompt = f"""
-Analyze the following text and identify entities and their relationships. Return a JSON response with:
-1. "entities": list of entities with their positions and context
-2. "relations": list of relationships between entities
+TEXT: {text}
 
-Text: {text}
+INSTRUCTIONS:
+1. Identify all important entities (people, organizations, locations, products, events, etc.)
+2. For each entity, provide the entity text and a short context window around it
+3. Identify relationships between entities
 
-Return only valid JSON.
+OUTPUT FORMAT:
+For each entity, output:
+ENTITY: [entity_text] | [context_window]
+
+For each relation, output:
+RELATION: [entity1_text] -> [entity2_text] | [relation_type]
+
+Example:
+ENTITY: Apple | technology company Apple Inc. is headquartered
+ENTITY: California | headquartered in Cupertino, California
+RELATION: Apple -> California | located_in
+
+IMPORTANT:
+- Entity text must match exactly what appears in the text
+- Context window should be 5-10 words around the entity
+- Only output entities and relations, no other text
 """
             
             messages = [{"role": "user", "content": prompt}]
             response = self.llm_client.call(messages, max_tokens=1024)
             
-            # Parse LLM response
-            try:
-                result = json.loads(response)
-                entities = result.get('entities', [])
-                relations = result.get('relations', [])
-            except:
-                # Fallback to simple heuristic detection
-                entity_texts = self._fallback_entity_detection(text)
-                entities = []
-                for i, entity_text in enumerate(entity_texts):
-                    start_pos = text.find(entity_text)
-                    entities.append({
-                        'text': entity_text,
-                        'start_pos': start_pos,
-                        'end_pos': start_pos + len(entity_text),
-                        'context_left': text[max(0, start_pos - 20):start_pos],
-                        'context_right': text[start_pos + len(entity_text):min(len(text), start_pos + len(entity_text) + 20)]
-                    })
-                relations = []
-            
-            # Add entities to graph
-            for i, entity_data in enumerate(entities):
-                node_id = f"entity_{i}"
-                node = GraphNode(
-                    entity_text=entity_data.get('text', ''),
-                    start_pos=entity_data.get('start_pos', 0),
-                    end_pos=entity_data.get('end_pos', 0),
-                    context_left=entity_data.get('context_left', ''),
-                    context_right=entity_data.get('context_right', '')
-                )
-                self.graph.add_node(node_id, node)
-            
-            # Add relations to graph
-            for relation in relations:
-                from_entity = relation.get('from', '')
-                to_entity = relation.get('to', '')
-                relation_type = relation.get('type', 'related')
-                
-                # Find corresponding node IDs
-                from_node_id = None
-                to_node_id = None
-                
-                for node_id, node in self.graph.nodes.items():
-                    if node.entity_text == from_entity:
-                        from_node_id = node_id
-                    if node.entity_text == to_entity:
-                        to_node_id = node_id
-                
-                if from_node_id and to_node_id:
-                    self.graph.add_edge(from_node_id, to_node_id, relation_type)
+            # Parse the response and find positions
+            self._parse_entity_graph_with_context(text, response)
             
         except Exception as e:
             print(f"[{self.system_name}] Error building entity graph: {e}")
-            # Fallback to simple detection
-            entities = self._fallback_entity_detection(text)
-            for i, entity_text in enumerate(entities):
-                node_id = f"entity_{i}"
-                node = GraphNode(
-                    entity_text=entity_text,
-                    start_pos=text.find(entity_text),
-                    end_pos=text.find(entity_text) + len(entity_text),
-                    context_left="",
-                    context_right=""
-                )
-                self.graph.add_node(node_id, node)
+            # Use comprehensive fallback
+            self._fallback_entity_detection_full(text)
     
-    def _fallback_entity_detection(self, text: str) -> List[str]:
-        """Fallback entity detection using heuristics"""
+    def _parse_entity_graph_with_context(self, text: str, response: str):
+        """Parse LLM response and find entity positions using context matching"""
+        lines = response.strip().split('\n')
         entities = []
-        words = text.split()
+        relations = []
         
-        for word in words:
-            if word[0].isupper() and len(word) > 2:
-                entities.append(word)
+        for line in lines:
+            line = line.strip()
+            if line.startswith('ENTITY:'):
+                # Parse entity line: ENTITY: entity_text | context_window
+                entity_part = line[7:].strip()
+                if '|' in entity_part:
+                    entity_text, context_window = entity_part.split('|', 1)
+                    entity_text = entity_text.strip()
+                    context_window = context_window.strip()
+                    
+                    # Find the entity position using context matching
+                    position_info = self._find_entity_position(text, entity_text, context_window)
+                    if position_info:
+                        entities.append({
+                            'text': entity_text,
+                            'start_pos': position_info['start_pos'],
+                            'end_pos': position_info['end_pos'],
+                            'context_left': position_info['context_left'],
+                            'context_right': position_info['context_right']
+                        })
+            
+            elif line.startswith('RELATION:'):
+                # Parse relation line: RELATION: entity1 -> entity2 | type
+                relation_part = line[9:].strip()
+                if '->' in relation_part and '|' in relation_part:
+                    arrow_idx = relation_part.index('->')
+                    pipe_idx = relation_part.index('|')
+                    
+                    from_entity = relation_part[:arrow_idx].strip()
+                    to_entity = relation_part[arrow_idx+2:pipe_idx].strip()
+                    relation_type = relation_part[pipe_idx+1:].strip()
+                    
+                    relations.append({
+                        'from': from_entity,
+                        'to': to_entity,
+                        'type': relation_type
+                    })
         
-        return entities
+        # Add entities to graph
+        for i, entity_data in enumerate(entities):
+            node_id = f"entity_{i}"
+            node = GraphNode(
+                entity_text=entity_data['text'],
+                start_pos=entity_data['start_pos'],
+                end_pos=entity_data['end_pos'],
+                context_left=entity_data['context_left'],
+                context_right=entity_data['context_right']
+            )
+            self.graph.add_node(node_id, node)
+        
+        # Add relations to graph
+        for relation in relations:
+            from_entity = relation['from']
+            to_entity = relation['to']
+            
+            # Find corresponding node IDs
+            from_node_id = None
+            to_node_id = None
+            
+            for node_id, node in self.graph.nodes.items():
+                if node.entity_text == from_entity:
+                    from_node_id = node_id
+                if node.entity_text == to_entity:
+                    to_node_id = node_id
+            
+            if from_node_id and to_node_id:
+                self.graph.add_edge(from_node_id, to_node_id, relation['type'])
+    
+    def _find_entity_position(self, text: str, entity_text: str, context_window: str) -> Optional[Dict]:
+        """Find entity position in text using entity text and context window"""
+        # First, try to find exact entity match
+        entity_lower = entity_text.lower()
+        text_lower = text.lower()
+        
+        # Try exact entity match first
+        start_pos = text_lower.find(entity_lower)
+        if start_pos != -1:
+            end_pos = start_pos + len(entity_text)
+            
+            # Get context around the found position
+            context_left = text[max(0, start_pos - 50):start_pos]
+            context_right = text[end_pos:min(len(text), end_pos + 50)]
+            
+            return {
+                'start_pos': start_pos,
+                'end_pos': end_pos,
+                'context_left': context_left,
+                'context_right': context_right
+            }
+        
+        # If exact entity not found, try using context window
+        context_lower = context_window.lower()
+        context_pos = text_lower.find(context_lower)
+        if context_pos != -1:
+            # Try to find entity within the context window
+            entity_in_context_pos = context_lower.find(entity_lower)
+            if entity_in_context_pos != -1:
+                start_pos = context_pos + entity_in_context_pos
+                end_pos = start_pos + len(entity_text)
+                
+                # Get context around the found position
+                context_left = text[max(0, start_pos - 50):start_pos]
+                context_right = text[end_pos:min(len(text), end_pos + 50)]
+                
+                return {
+                    'start_pos': start_pos,
+                    'end_pos': end_pos,
+                    'context_left': context_left,
+                    'context_right': context_right
+                }
+        
+        # If still not found, try fuzzy matching with words
+        entity_words = entity_lower.split()
+        if len(entity_words) > 1:
+            # Try to find consecutive words from entity
+            for i in range(len(text_lower.split()) - len(entity_words) + 1):
+                text_segment = ' '.join(text_lower.split()[i:i + len(entity_words)])
+                if text_segment == entity_lower:
+                    # Find the actual character positions
+                    words = text.split()
+                    start_pos = text_lower.find(' '.join(words[i:i + len(entity_words)]))
+                    end_pos = start_pos + len(' '.join(words[i:i + len(entity_words)]))
+                    
+                    context_left = text[max(0, start_pos - 50):start_pos]
+                    context_right = text[end_pos:min(len(text), end_pos + 50)]
+                    
+                    return {
+                        'start_pos': start_pos,
+                        'end_pos': end_pos,
+                        'context_left': context_left,
+                        'context_right': context_right
+                    }
+        
+        return None
+    
+    def _fallback_entity_detection_full(self, text: str):
+        """Comprehensive fallback entity detection"""
+        entities = []
+        
+        # Pattern-based entity detection with position finding
+        patterns = [
+            # Proper nouns (capitalized words)
+            r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b',
+            # Organizations with common suffixes
+            r'\b[A-Z][a-zA-Z]+\s+(Inc|Corp|Company|Corporation|Ltd|LLC)\b',
+            # Locations
+            r'\b[A-Z][a-zA-Z]+\s+(City|State|County|Country|River|Mountain)\b',
+        ]
+        
+        for pattern in patterns:
+            for match in re.finditer(pattern, text):
+                entity_text = match.group()
+                start_pos = match.start()
+                end_pos = match.end()
+                
+                # Avoid duplicates
+                if not any(e['text'] == entity_text and e['start_pos'] == start_pos for e in entities):
+                    context_left = text[max(0, start_pos - 50):start_pos]
+                    context_right = text[end_pos:min(len(text), end_pos + 50)]
+                    
+                    entities.append({
+                        'text': entity_text,
+                        'start_pos': start_pos,
+                        'end_pos': end_pos,
+                        'context_left': context_left,
+                        'context_right': context_right
+                    })
+        
+        # Add entities to graph
+        for i, entity_data in enumerate(entities):
+            node_id = f"entity_{i}"
+            node = GraphNode(
+                entity_text=entity_data['text'],
+                start_pos=entity_data['start_pos'],
+                end_pos=entity_data['end_pos'],
+                context_left=entity_data['context_left'],
+                context_right=entity_data['context_right']
+            )
+            self.graph.add_node(node_id, node)
     
     def _generate_entity_descriptions(self, timeout: int):
-        """Generate descriptions for each entity using LLM"""
+        """Generate descriptions for each entity using LLM with clear instructions"""
         for node_id, node in self.graph.nodes.items():
             try:
                 prompt = f"""
-Generate {self.N_DESCRIPTIONS} different descriptions for the entity "{node.entity_text}" in the context: "{node.context_left} {node.entity_text} {node.context_right}".
+ENTITY: "{node.entity_text}"
+CONTEXT: "...{node.context_left} {node.entity_text} {node.context_right}..."
 
-Each description should be a short sentence that helps identify this entity in different aspects, their meaning, word-choice should be different. Return as a JSON list of strings.
+INSTRUCTIONS:
+Generate {self.N_DESCRIPTIONS} different descriptions for this entity. Each description should be a short phrase that helps identify what this entity is.
 
-Example: ["A technology company", "A fruit company", "A multinational corporation"]
+OUTPUT FORMAT:
+DESCRIPTION 1: [description1]
+DESCRIPTION 2: [description2]
+DESCRIPTION 3: [description3]
+
+Example:
+DESCRIPTION 1: A technology company
+DESCRIPTION 2: A fruit company  
+DESCRIPTION 3: A multinational corporation
+
+Make each description distinct and informative.
 """
                 
                 messages = [{"role": "user", "content": prompt}]
-                response = self.llm_client.call(messages, max_tokens=512)
+                response = self.llm_client.call(messages, max_tokens=256)
                 
-                try:
-                    descriptions = json.loads(response)
-                    if isinstance(descriptions, list):
-                        node.descriptions = descriptions[:self.N_DESCRIPTIONS]
-                    else:
-                        node.descriptions = [response]
-                except:
-                    node.descriptions = [f"Entity: {node.entity_text}"]
+                # Parse descriptions from response
+                descriptions = self._parse_descriptions(response)
+                if descriptions:
+                    node.descriptions = descriptions[:self.N_DESCRIPTIONS]
+                else:
+                    # Fallback descriptions
+                    node.descriptions = [
+                        f"The entity: {node.entity_text}",
+                        f"Information about {node.entity_text}",
+                        f"Details regarding {node.entity_text}"
+                    ]
                 
                 time.sleep(self.config.LLM_API_DELAY)
                 
@@ -323,30 +476,50 @@ Example: ["A technology company", "A fruit company", "A multinational corporatio
                 print(f"[{self.system_name}] Error generating descriptions for {node.entity_text}: {e}")
                 node.descriptions = [f"Entity: {node.entity_text}"]
     
+    def _parse_descriptions(self, response: str) -> List[str]:
+        """Parse descriptions from LLM response"""
+        descriptions = []
+        lines = response.strip().split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            # Match patterns like "DESCRIPTION 1: text" or "1. text"
+            if re.match(r'^(DESCRIPTION\s+\d+|\d+\.?)\s*:', line, re.IGNORECASE):
+                # Extract text after the colon
+                colon_idx = line.find(':')
+                if colon_idx != -1:
+                    description = line[colon_idx + 1:].strip()
+                    if description:
+                        descriptions.append(description)
+            elif line and not line.startswith('DESCRIPTION') and len(line) > 10:
+                # Consider any substantial line as a description
+                descriptions.append(line)
+        
+        return descriptions[:self.N_DESCRIPTIONS] if descriptions else []
+    
     def _search_and_match_entities(self, timeout: int):
         """Search for relevant entities in database for each graph node"""
         for node_id, node in self.graph.nodes.items():
             try:
-                # Search using entity text
-                candidates = self.entity_database.search(
-                    node.entity_text,
-                    top_k=self.K_SEARCH,
-                    timeout=self.config.SEARCH_TIMEOUT
-                )
+                # Combine entity text and descriptions for search
+                search_queries = [node.entity_text] + node.descriptions
+                all_candidates = []
                 
-                # Also search using descriptions
-                for description in node.descriptions:
-                    desc_candidates = self.entity_database.search(
-                        description,
+                for query in search_queries:
+                    if len(query) < 2:  # Skip very short queries
+                        continue
+                        
+                    candidates = self.entity_database.search(
+                        query,
                         top_k=self.K_SEARCH,
                         timeout=self.config.SEARCH_TIMEOUT
                     )
-                    candidates.extend(desc_candidates)
+                    all_candidates.extend(candidates)
                 
-                # Remove duplicates and limit
+                # Remove duplicates and sort by score
                 seen_ids = set()
                 unique_candidates = []
-                for candidate in candidates:
+                for candidate in sorted(all_candidates, key=lambda x: x.get('score', 0), reverse=True):
                     if candidate['id'] not in seen_ids:
                         unique_candidates.append(candidate)
                         seen_ids.add(candidate['id'])
@@ -361,107 +534,186 @@ Example: ["A technology company", "A fruit company", "A multinational corporatio
                 node.candidates = []
     
     def _select_high_confidence_entities(self, timeout: int):
-        """Select high-confidence entities using iterative LLM selection"""
+        """Select high-confidence entities using iterative LLM selection with clear instructions"""
         for node_id, node in self.graph.nodes.items():
             if not node.candidates:
+                node.metadata['selection_reason'] = 'no_candidates'
                 continue
             
             try:
-                # Iterative selection process
                 current_candidates = node.candidates.copy()
                 
+                # If we have few candidates, try direct matching first
+                if len(current_candidates) <= 3:
+                    best_candidate = self._direct_match_entity(node, current_candidates)
+                    if best_candidate:
+                        self._assign_entity(node, best_candidate, "high_confidence", 0.9)
+                        continue
+                
+                # Iterative selection for more candidates
                 while len(current_candidates) > 1 and len(current_candidates) > self.T_MAX:
-                    # Select top T_MAX candidates
-                    top_candidates = current_candidates[:self.T_MAX]
-                    
-                    # Ask LLM to select best candidates
-                    selected = self._llm_select_candidates(node, top_candidates, timeout)
-                    current_candidates = selected
+                    current_candidates = self._llm_select_candidates(node, current_candidates, timeout)
                 
                 # Final selection
                 if len(current_candidates) == 1:
-                    best_candidate = current_candidates[0]
-                    node.entity_id = best_candidate['id']
-                    node.entity_title = best_candidate['title']
-                    node.confidence = self.HIGH_CONFIDENCE_THRESHOLD
-                    node.status = "high_confidence"
+                    self._assign_entity(node, current_candidates[0], "high_confidence", 0.9)
                 elif len(current_candidates) > 1:
-                    # Ask LLM to rank and select best
                     best_candidate = self._llm_rank_candidates(node, current_candidates, timeout)
                     if best_candidate:
-                        node.entity_id = best_candidate['id']
-                        node.entity_title = best_candidate['title']
-                        node.confidence = 0.8
-                        node.status = "high_confidence"
+                        self._assign_entity(node, best_candidate, "high_confidence", 0.8)
+                    else:
+                        # Fallback to highest scoring candidate
+                        best_candidate = max(current_candidates, key=lambda x: x.get('score', 0))
+                        self._assign_entity(node, best_candidate, "high_confidence", 0.7)
                 
                 node.metadata['final_candidates'] = len(current_candidates)
                 
             except Exception as e:
                 print(f"[{self.system_name}] Error in high-confidence selection for {node.entity_text}: {e}")
+                # Fallback to first candidate
+                if node.candidates:
+                    self._assign_entity(node, node.candidates[0], "high_confidence", 0.6)
+    
+    def _direct_match_entity(self, node: GraphNode, candidates: List[Dict]) -> Optional[Dict]:
+        """Try direct matching based on entity text similarity"""
+        entity_lower = node.entity_text.lower()
+        
+        for candidate in candidates:
+            title_lower = candidate['title'].lower()
+            
+            # Exact match or close match
+            if (entity_lower == title_lower or 
+                entity_lower in title_lower or 
+                title_lower in entity_lower):
+                return candidate
+        
+        return None
+    
+    def _assign_entity(self, node: GraphNode, candidate: Dict, status: str, confidence: float):
+        """Assign entity candidate to node"""
+        node.entity_id = candidate['id']
+        node.entity_title = candidate['title']
+        node.confidence = confidence
+        node.status = status
+        node.metadata['assigned_candidate'] = candidate['title']
     
     def _llm_select_candidates(self, node: GraphNode, candidates: List[Dict], timeout: int) -> List[Dict]:
-        """Use LLM to select best candidates from a list"""
+        """Use LLM to select best candidates from a list with clear instructions"""
         try:
             prompt = f"""
-Given the entity "{node.entity_text}" in context "{node.context_left} {node.entity_text} {node.context_right}",
-select the most relevant entities from the following candidates. Return the IDs of selected entities as a JSON list.
+ENTITY: "{node.entity_text}"
+CONTEXT: "...{node.context_left} {node.entity_text} {node.context_right}..."
 
-Candidates:
+CANDIDATES:
 """
             
-            for i, candidate in enumerate(candidates):
-                prompt += f"{i+1}. ID: {candidate['id']}, Title: {candidate['title']}, Description: {candidate['description'][:100]}...\n"
+            for i, candidate in enumerate(candidates[:self.T_MAX]):
+                prompt += f"{i+1}. {candidate['title']} - {candidate['description'][:150]}\n"
             
-            prompt += "\nReturn only the IDs of the most relevant entities as a JSON list."
+            prompt += f"""
+INSTRUCTIONS:
+Select the {min(3, len(candidates)//2)} most relevant candidates for the entity above.
+
+OUTPUT FORMAT:
+SELECTED: 1, 3, 5
+
+Only output the numbers of selected candidates separated by commas. No explanations.
+"""
             
             messages = [{"role": "user", "content": prompt}]
-            response = self.llm_client.call(messages, max_tokens=256)
+            response = self.llm_client.call(messages, max_tokens=128)
             
-            try:
-                selected_ids = json.loads(response)
-                if isinstance(selected_ids, list):
-                    # Filter candidates by selected IDs
-                    selected_candidates = [c for c in candidates if c['id'] in selected_ids]
-                    return selected_candidates[:3]  # Limit to 3
-            except:
-                pass
+            # Parse selected indices
+            selected_indices = self._parse_selected_indices(response)
+            selected_candidates = []
             
-            # Fallback: return top 3 candidates
-            return candidates[:3]
+            for idx in selected_indices:
+                if 1 <= idx <= len(candidates):
+                    selected_candidates.append(candidates[idx-1])
+            
+            return selected_candidates if selected_candidates else candidates[:3]
             
         except Exception as e:
             print(f"[{self.system_name}] Error in LLM candidate selection: {e}")
             return candidates[:3]
     
+    def _parse_selected_indices(self, response: str) -> List[int]:
+        """Parse selected indices from LLM response"""
+        indices = []
+        
+        # Look for patterns like "SELECTED: 1, 3, 5" or just "1, 3, 5"
+        lines = response.strip().split('\n')
+        for line in lines:
+            line = line.strip()
+            if 'SELECTED:' in line.upper():
+                line = line[line.upper().index('SELECTED:') + 9:].strip()
+            
+            # Extract numbers
+            numbers = re.findall(r'\d+', line)
+            for num in numbers:
+                try:
+                    indices.append(int(num))
+                except ValueError:
+                    continue
+        
+        return indices
+    
     def _llm_rank_candidates(self, node: GraphNode, candidates: List[Dict], timeout: int) -> Optional[Dict]:
-        """Use LLM to rank candidates and select the best one"""
+        """Use LLM to rank candidates and select the best one with clear instructions"""
         try:
             prompt = f"""
-Given the entity "{node.entity_text}" in context "{node.context_left} {node.entity_text} {node.context_right}",
-rank the following candidates from best to worst match. Return the ID of the best match.
+ENTITY: "{node.entity_text}" 
+CONTEXT: "...{node.context_left} {node.entity_text} {node.context_right}..."
 
-Candidates:
+CANDIDATES:
 """
             
             for i, candidate in enumerate(candidates):
-                prompt += f"{i+1}. ID: {candidate['id']}, Title: {candidate['title']}, Description: {candidate['description'][:100]}...\n"
+                prompt += f"{i+1}. {candidate['title']} - {candidate['description'][:150]}\n"
             
-            prompt += "\nReturn only the ID of the best match."
+            prompt += f"""
+INSTRUCTIONS:
+Select the SINGLE best candidate for the entity above.
+
+OUTPUT FORMAT:
+BEST: [number]
+
+Only output the number of the best candidate. No explanations.
+"""
             
             messages = [{"role": "user", "content": prompt}]
-            response = self.llm_client.call(messages, max_tokens=128)
+            response = self.llm_client.call(messages, max_tokens=64)
             
-            # Extract ID from response
-            for candidate in candidates:
-                if candidate['id'] in response:
-                    return candidate
+            # Parse best candidate index
+            best_index = self._parse_best_index(response)
+            if best_index is not None and 1 <= best_index <= len(candidates):
+                return candidates[best_index-1]
             
-            # Fallback: return first candidate
-            return candidates[0] if candidates else None
+            # Fallback: return candidate with highest score
+            return max(candidates, key=lambda x: x.get('score', 0))
             
         except Exception as e:
             print(f"[{self.system_name}] Error in LLM candidate ranking: {e}")
-            return candidates[0] if candidates else None
+            return max(candidates, key=lambda x: x.get('score', 0)) if candidates else None
+    
+    def _parse_best_index(self, response: str) -> Optional[int]:
+        """Parse best candidate index from LLM response"""
+        # Look for patterns like "BEST: 1" or just "1"
+        lines = response.strip().split('\n')
+        for line in lines:
+            line = line.strip()
+            if 'BEST:' in line.upper():
+                line = line[line.upper().index('BEST:') + 5:].strip()
+            
+            # Extract first number
+            numbers = re.findall(r'\d+', line)
+            if numbers:
+                try:
+                    return int(numbers[0])
+                except ValueError:
+                    continue
+        
+        return None
     
     def _rematch_low_quality_entities(self, timeout: int):
         """Re-match low-quality entities using graph context"""
@@ -488,14 +740,17 @@ Candidates:
         """Re-match entity using context from connected nodes"""
         try:
             # Gather context from connected nodes
-            context_info = []
+            context_titles = []
             for context_node_id in context_nodes:
                 context_node = self.graph.nodes[context_node_id]
                 if context_node.entity_id and context_node.entity_title:
-                    context_info.append(f"{context_node.entity_text} -> {context_node.entity_title} (ID: {context_node.entity_id})")
+                    context_titles.append(context_node.entity_title)
+            
+            if not context_titles:
+                return
             
             # Search with enhanced context
-            search_query = f"{node.entity_text} {' '.join(context_info)}"
+            search_query = f"{node.entity_text} {' '.join(context_titles)}"
             candidates = self.entity_database.search(
                 search_query,
                 top_k=self.K_SEARCH,
@@ -504,16 +759,53 @@ Candidates:
             
             if candidates:
                 # Use LLM to select best match with context
-                best_candidate = self._llm_rank_candidates(node, candidates, timeout)
+                best_candidate = self._llm_rank_candidates_with_context(node, candidates, context_titles, timeout)
                 if best_candidate:
                     node.entity_id = best_candidate['id']
                     node.entity_title = best_candidate['title']
                     node.confidence = 0.7
                     node.metadata['rematched'] = True
-                    node.metadata['context_used'] = len(context_info)
+                    node.metadata['context_used'] = len(context_titles)
             
         except Exception as e:
             print(f"[{self.system_name}] Error in context-based re-matching: {e}")
+    
+    def _llm_rank_candidates_with_context(self, node: GraphNode, candidates: List[Dict], context_titles: List[str], timeout: int) -> Optional[Dict]:
+        """Rank candidates with context information"""
+        try:
+            prompt = f"""
+ENTITY: "{node.entity_text}"
+CONTEXT: "...{node.context_left} {node.entity_text} {node.context_right}..."
+RELATED ENTITIES: {', '.join(context_titles)}
+
+CANDIDATES:
+"""
+            
+            for i, candidate in enumerate(candidates):
+                prompt += f"{i+1}. {candidate['title']} - {candidate['description'][:150]}\n"
+            
+            prompt += """
+INSTRUCTIONS:
+Select the candidate that best matches the entity given the context and related entities.
+
+OUTPUT FORMAT:
+BEST: [number]
+
+Only output the number of the best candidate.
+"""
+            
+            messages = [{"role": "user", "content": prompt}]
+            response = self.llm_client.call(messages, max_tokens=128)
+            
+            best_index = self._parse_best_index(response)
+            if best_index is not None and 1 <= best_index <= len(candidates):
+                return candidates[best_index-1]
+            
+            return candidates[0] if candidates else None
+            
+        except Exception as e:
+            print(f"[{self.system_name}] Error in context-based ranking: {e}")
+            return candidates[0] if candidates else None
     
     def _final_entity_assignment(self):
         """Final assignment for remaining entities"""
@@ -695,4 +987,4 @@ def test_graph_system():
     print("\nGraph system test completed successfully!")
 
 if __name__ == "__main__":
-    main()
+    test_graph_system()

@@ -1,5 +1,5 @@
-LLM_MODEL: google/gemma-3-270m
-LLM_MODEL_PATH: google/gemma-3-270m
+LLM_MODEL: google/gemma-3-4b-it
+LLM_MODEL_PATH: google/gemma-3-4b-it
 LLM_MAX_TOKENS: 384
 LLM_API_DELAY: 0.1
 
