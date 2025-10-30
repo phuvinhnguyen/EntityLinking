@@ -42,19 +42,27 @@ class LLMClient:
                 print(
                     f"Loading HuggingFace model from {self.model_path} (trust_remote_code={trust_remote_code}, use_fast={use_fast})"
                 )
-                self.model = AutoModelForCausalLM.from_pretrained(
-                    self.model_path,
-                    device_map='auto',
-                    dtype='auto',
-                    token=hf_token,
-                    trust_remote_code=trust_remote_code,
-                )
-                self.tokenizer = AutoTokenizer.from_pretrained(
-                    self.model_path,
-                    token=hf_token,
-                    trust_remote_code=trust_remote_code,
-                    use_fast=use_fast,
-                )
+                try:
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        self.model_path,
+                        device_map='auto',
+                        dtype='auto',
+                        token=hf_token,
+                        trust_remote_code=trust_remote_code,
+                    )
+                except Exception as e:
+                    print(f"Error loading HuggingFace model: {type(e).__name__}: {e}")
+                    return False
+                try:
+                    self.tokenizer = AutoTokenizer.from_pretrained(
+                        self.model_path,
+                        token=hf_token,
+                        trust_remote_code=trust_remote_code,
+                        use_fast=use_fast,
+                    )
+                except Exception as e:
+                    print(f"Error loading HuggingFace tokenizer: {type(e).__name__}: {e}")
+                    return False
                 if self.tokenizer.pad_token is None:
                     self.tokenizer.pad_token = self.tokenizer.eos_token
                 return True
