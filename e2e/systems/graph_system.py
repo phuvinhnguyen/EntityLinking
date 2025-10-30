@@ -659,42 +659,277 @@ Only output the numbers of selected candidates separated by commas. No explanati
         return indices
     
     def _llm_rank_candidates(self, node: GraphNode, candidates: List[Dict], timeout: int) -> Optional[Dict]:
-        """Use LLM to rank candidates and select the best one with clear instructions"""
+        """Use LLM to rank candidates using overlapping lists and confidence aggregation"""
+        if len(candidates) <= 1:
+            return candidates[0] if candidates else None
+        
         try:
-            prompt = f"""
-ENTITY: "{node.entity_text}" 
-CONTEXT: "...{node.context_left} {node.entity_text} {node.context_right}..."
-
-CANDIDATES:
-"""
+            # Create overlapping groups of candidates
+            groups = self._create_overlapping_groups(candidates, group_size=3, overlap=2)
             
-            for i, candidate in enumerate(candidates):
-                prompt += f"{i+1}. {candidate['title']} - {candidate['description'][:150]}\n"
+            # Get LLM rankings for each group with confidence
+            group_results = []
+            for i, group in enumerate(groups):
+                group_ranking = self._llm_rank_group_with_confidence(node, group, timeout)
+                if group_ranking:
+                    group_results.append({
+                        'group_id': i,
+                        'candidates': group,
+                        'ranking': group_ranking
+                    })
+                time.sleep(0.1)  # Small delay between group requests
             
-            prompt += f"""
-INSTRUCTIONS:
-Select the SINGLE best candidate for the entity above.
-
-OUTPUT FORMAT:
-BEST: [number]
-
-Only output the number of the best candidate. No explanations.
-"""
+            if not group_results:
+                # Fallback to highest scoring candidate
+                return max(candidates, key=lambda x: x.get('score', 0))
             
-            messages = [{"role": "user", "content": prompt}]
-            response = self.llm_client.call(messages, max_tokens=64)
+            # Aggregate results using confidence-weighted scoring
+            candidate_scores = self._aggregate_group_rankings(candidates, group_results)
             
-            # Parse best candidate index
-            best_index = self._parse_best_index(response)
-            if best_index is not None and 1 <= best_index <= len(candidates):
-                return candidates[best_index-1]
+            # Return candidate with highest aggregated score
+            best_candidate_id = max(candidate_scores.items(), key=lambda x: x[1])[0]
+            for candidate in candidates:
+                if candidate['id'] == best_candidate_id:
+                    return candidate
             
-            # Fallback: return candidate with highest score
+            # Fallback
             return max(candidates, key=lambda x: x.get('score', 0))
             
         except Exception as e:
             print(f"[{self.system_name}] Error in LLM candidate ranking: {e}")
             return max(candidates, key=lambda x: x.get('score', 0)) if candidates else None
+
+    def _create_overlapping_groups(self, candidates: List[Dict], group_size: int = 3, overlap: int = 2) -> List[List[Dict]]:
+        """Create overlapping groups of candidates"""
+        groups = []
+        n = len(candidates)
+        
+        if n <= group_size:
+            return [candidates]
+        
+        # Create overlapping groups
+        for i in range(0, n - overlap + 1, group_size - overlap):
+            group = candidates[i:i + group_size]
+            if len(group) >= 2:  # Only include groups with at least 2 candidates
+                groups.append(group)
+            
+            # Stop if we've covered all candidates
+            if i + group_size >= n:
+                break
+        
+        # Ensure all candidates appear in at least one group
+        candidate_coverage = set()
+        for group in groups:
+            for candidate in group:
+                candidate_coverage.add(candidate['id'])
+        
+        # Add missing candidates to appropriate groups
+        for candidate in candidates:
+            if candidate['id'] not in candidate_coverage:
+                # Add to the group where it fits best (based on similarity)
+                best_group_idx = self._find_best_group_for_candidate(candidate, groups)
+                if best_group_idx is not None and len(groups[best_group_idx]) < group_size + 1:
+                    groups[best_group_idx].append(candidate)
+        
+        return groups
+
+    def _find_best_group_for_candidate(self, candidate: Dict, groups: List[List[Dict]]) -> Optional[int]:
+        """Find the best group to add a candidate based on content similarity"""
+        best_group_idx = None
+        best_similarity = -1
+        
+        candidate_text = f"{candidate['title']} {candidate['description'][:100]}".lower()
+        
+        for i, group in enumerate(groups):
+            group_text = " ".join([f"{c['title']} {c['description'][:50]}" for c in group]).lower()
+            
+            # Simple text-based similarity
+            similarity = self._text_similarity(candidate_text, group_text)
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_group_idx = i
+        
+        return best_group_idx if best_similarity > 0.1 else None
+
+    def _text_similarity(self, text1: str, text2: str) -> float:
+        """Calculate simple text similarity based on common words"""
+        words1 = set(text1.lower().split())
+        words2 = set(text2.lower().split())
+        
+        if not words1 or not words2:
+            return 0.0
+        
+        common_words = words1.intersection(words2)
+        return len(common_words) / max(len(words1), len(words2))
+
+    def _llm_rank_group_with_confidence(self, node: GraphNode, group: List[Dict], timeout: int) -> List[Dict]:
+        """Get LLM ranking for a group of candidates with confidence scores"""
+        try:
+            prompt = f"""
+    ENTITY: "{node.entity_text}" 
+    CONTEXT: "...{node.context_left} {node.entity_text} {node.context_right}..."
+
+    CANDIDATES in this group:
+    """
+            
+            for i, candidate in enumerate(group):
+                prompt += f"{i+1}. {candidate['title']} - {candidate['description'][:100]}\n"
+            
+            prompt += f"""
+    INSTRUCTIONS:
+    Rank the candidates from most relevant (1) to least relevant ({len(group)}) for the entity above.
+    Also provide a confidence score (0.0 to 1.0) for your top choice.
+
+    OUTPUT FORMAT:
+    RANKING: 2, 1, 3
+    CONFIDENCE: 0.85
+
+    Example for 3 candidates:
+    RANKING: 2, 1, 3
+    CONFIDENCE: 0.85
+
+    This means candidate 2 is most relevant, then 1, then 3, with 85% confidence in the top choice.
+
+    Only output the RANKING and CONFIDENCE lines. No explanations.
+    """
+            
+            messages = [{"role": "user", "content": prompt}]
+            response = self.llm_client.call(messages, max_tokens=128)
+            
+            return self._parse_group_ranking(response, group)
+            
+        except Exception as e:
+            print(f"[{self.system_name}] Error in LLM group ranking: {e}")
+            return []
+
+    def _parse_group_ranking(self, response: str, group: List[Dict]) -> List[Dict]:
+        """Parse group ranking and confidence from LLM response"""
+        try:
+            lines = response.strip().split('\n')
+            ranking_line = None
+            confidence_line = None
+            
+            for line in lines:
+                line = line.strip()
+                if line.startswith('RANKING:'):
+                    ranking_line = line[8:].strip()
+                elif line.startswith('CONFIDENCE:'):
+                    confidence_line = line[11:].strip()
+            
+            if not ranking_line:
+                return []
+            
+            # Parse ranking
+            ranking_numbers = []
+            for part in ranking_line.split(','):
+                part = part.strip()
+                if part.isdigit():
+                    num = int(part)
+                    if 1 <= num <= len(group):
+                        ranking_numbers.append(num)
+            
+            if len(ranking_numbers) != len(group):
+                return []
+            
+            # Parse confidence
+            confidence = 0.5  # Default confidence
+            if confidence_line:
+                try:
+                    conf_val = float(confidence_line)
+                    if 0.0 <= conf_val <= 1.0:
+                        confidence = conf_val
+                except ValueError:
+                    pass
+            
+            # Create ranking results
+            results = []
+            for rank_pos, candidate_num in enumerate(ranking_numbers):
+                candidate_idx = candidate_num - 1
+                if 0 <= candidate_idx < len(group):
+                    # Calculate score: higher rank = higher score, weighted by confidence
+                    rank_score = (len(group) - rank_pos) / len(group)  # Normalized rank score
+                    weighted_score = rank_score * confidence
+                    
+                    results.append({
+                        'candidate': group[candidate_idx],
+                        'rank': rank_pos + 1,
+                        'confidence': confidence if rank_pos == 0 else confidence * 0.5,  # Lower confidence for lower ranks
+                        'score': weighted_score
+                    })
+            
+            return results
+            
+        except Exception as e:
+            print(f"[{self.system_name}] Error parsing group ranking: {e}")
+            return []
+
+    def _aggregate_group_rankings(self, all_candidates: List[Dict], group_results: List[Dict]) -> Dict[str, float]:
+        """Aggregate rankings from all groups using confidence-weighted scoring"""
+        candidate_scores = {candidate['id']: 0.0 for candidate in all_candidates}
+        candidate_appearances = {candidate['id']: 0 for candidate in all_candidates}
+        
+        # Method 1: Simple confidence-weighted scoring
+        for group_result in group_results:
+            for ranked_item in group_result['ranking']:
+                candidate_id = ranked_item['candidate']['id']
+                score = ranked_item['score']
+                confidence = ranked_item['confidence']
+                
+                # Weight score by confidence
+                weighted_score = score * confidence
+                candidate_scores[candidate_id] += weighted_score
+                candidate_appearances[candidate_id] += 1
+        
+        # Normalize by number of appearances
+        for candidate_id in candidate_scores:
+            if candidate_appearances[candidate_id] > 0:
+                candidate_scores[candidate_id] /= candidate_appearances[candidate_id]
+        
+        # Method 2: Apply Bradley-Terry like adjustment for head-to-head comparisons
+        candidate_scores = self._apply_pairwise_adjustment(candidate_scores, group_results, all_candidates)
+        
+        return candidate_scores
+
+    def _apply_pairwise_adjustment(self, base_scores: Dict[str, float], 
+                                group_results: List[Dict], 
+                                all_candidates: List[Dict]) -> Dict[str, float]:
+        """Apply pairwise comparison adjustment to scores"""
+        pairwise_wins = defaultdict(int)
+        pairwise_comparisons = defaultdict(int)
+        
+        # Count pairwise wins
+        for group_result in group_results:
+            ranking = group_result['ranking']
+            confidence = ranking[0]['confidence'] if ranking else 0.5
+            
+            for i, item1 in enumerate(ranking):
+                for j, item2 in enumerate(ranking):
+                    if i < j:  # item1 is ranked higher than item2
+                        candidate1 = item1['candidate']['id']
+                        candidate2 = item2['candidate']['id']
+                        pairwise_wins[candidate1] += confidence
+                        pairwise_comparisons[(candidate1, candidate2)] += 1
+        
+        # Adjust scores based on pairwise performance
+        adjusted_scores = base_scores.copy()
+        
+        for candidate_id in adjusted_scores:
+            win_ratio = 0
+            comparison_count = 0
+            
+            for (c1, c2), count in pairwise_comparisons.items():
+                if c1 == candidate_id:
+                    win_ratio += pairwise_wins[candidate_id]
+                    comparison_count += count
+                elif c2 == candidate_id:
+                    comparison_count += count
+            
+            if comparison_count > 0:
+                win_rate = win_ratio / comparison_count if comparison_count > 0 else 0.5
+                # Blend original score with pairwise performance
+                adjusted_scores[candidate_id] = 0.7 * adjusted_scores[candidate_id] + 0.3 * win_rate
+        
+        return adjusted_scores
     
     def _parse_best_index(self, response: str) -> Optional[int]:
         """Parse best candidate index from LLM response"""

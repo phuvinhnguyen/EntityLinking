@@ -1,6 +1,6 @@
 **/__pycache__/
+EntityLinking/e2e/configs/
 **/zeshel/
 **/venv/
 **/entities/WikiEntities/
 **/test_data/*.jsonl
-**/e2e/configs/*.yaml
